@@ -48,9 +48,11 @@ def main():
     slouch_alert_active = False
     tilt_alert_active = False
 
-    # Violation Counters
+    # Metrics Tracking
     slouch_violations_count = 0
     tilt_violations_count = 0
+    total_slouch_seconds = 0.0
+    total_tilt_seconds = 0.0
 
     model_path = 'pose_landmarker_lite.task'
     base_options = python.BaseOptions(model_asset_path=model_path)
@@ -68,23 +70,28 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
-    start_time_ms = int(time.time() * 1000)
+    session_start_time = time.time()
+    last_frame_time = session_start_time
+    start_time_ms = int(session_start_time * 1000)
 
-    print("\n[INFO] Kinematics Engine running with EMA smoothing & Temporal Debouncing.")
-    print("Press 'q' to quit.\n")
+    print("\n[INFO] Kinematics Engine running with Session Analytics.")
+    print("Press 'q' to end session and generate your Posture Performance Report.\n")
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
+        now = time.time()
+        dt = now - last_frame_time
+        last_frame_time = now
+
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-        frame_timestamp_ms = int(time.time() * 1000) - start_time_ms
+        frame_timestamp_ms = int(now * 1000) - start_time_ms
 
         detection_result = landmarker.detect_for_video(mp_image, frame_timestamp_ms)
         h, w, _ = frame.shape
-        now = time.time()
 
         if detection_result.pose_landmarks:
             lms = detection_result.pose_landmarks[0]
@@ -107,9 +114,7 @@ def main():
 
             angle_delta = smooth_angle - base_angle
 
-            # ---------------------------------------------------------
             # Slouch Debouncing Logic
-            # ---------------------------------------------------------
             if angle_delta > SLOUCH_ANGLE_THRESHOLD:
                 if slouch_start_time is None:
                     slouch_start_time = now
@@ -117,13 +122,12 @@ def main():
                     if not slouch_alert_active:
                         slouch_violations_count += 1
                         slouch_alert_active = True
+                    total_slouch_seconds += dt
             else:
                 slouch_start_time = None
                 slouch_alert_active = False
 
-            # ---------------------------------------------------------
             # Shoulder Tilt Debouncing Logic
-            # ---------------------------------------------------------
             if smooth_tilt > SHOULDER_TILT_THRESHOLD:
                 if tilt_start_time is None:
                     tilt_start_time = now
@@ -131,17 +135,15 @@ def main():
                     if not tilt_alert_active:
                         tilt_violations_count += 1
                         tilt_alert_active = True
+                    total_tilt_seconds += dt
             else:
                 tilt_start_time = None
                 tilt_alert_active = False
 
-            # ---------------------------------------------------------
             # HUD & Visualization
-            # ---------------------------------------------------------
             spine_color = (0, 0, 255) if slouch_alert_active else (0, 255, 0)
             sh_color = (0, 0, 255) if tilt_alert_active else (0, 255, 0)
 
-            # Draw skeleton segments
             cv2.line(frame, 
                      (int(ear_mid[0] * w), int(ear_mid[1] * h)), 
                      (int(sh_mid[0] * w), int(sh_mid[1] * h)), 
@@ -155,35 +157,41 @@ def main():
             for pt in [ear_l, ear_r, sh_l, sh_r]:
                 cv2.circle(frame, (int(pt[0] * w), int(pt[1] * h)), 5, (255, 255, 255), -1)
 
+            # Elapsed Session Time
+            elapsed_session = now - session_start_time
+            mins, secs = divmod(int(elapsed_session), 60)
+
             # Telemetry Metrics HUD
-            cv2.putText(frame, f"Baseline Angle: {base_angle:.1f} deg", (30, 40), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (220, 220, 220), 2)
-            cv2.putText(frame, f"Smoothed Angle: {smooth_angle:.1f} deg (Delta: {angle_delta:+.1f})", 
-                        (30, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (220, 220, 220), 2)
-            cv2.putText(frame, f"Smoothed Tilt:  {smooth_tilt:.3f}", (30, 100), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (220, 220, 220), 2)
+            cv2.putText(frame, f"Session Time:  {mins:02d}:{secs:02d}", (30, 40), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(frame, f"Baseline Angle:{base_angle:.1f} deg", (30, 70), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
+            cv2.putText(frame, f"Smoothed Angle:{smooth_angle:.1f} deg (Delta: {angle_delta:+.1f})", 
+                        (30, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
+            cv2.putText(frame, f"Smoothed Tilt: {smooth_tilt:.3f}", (30, 130), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
 
-            # Persistent Violation Counters
-            cv2.putText(frame, f"Slouch Faults: {slouch_violations_count}", (30, 140), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
-            cv2.putText(frame, f"Tilt Faults:   {tilt_violations_count}", (30, 170), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
+            # Fault Counters
+            cv2.putText(frame, f"Slouch Faults: {slouch_violations_count} ({total_slouch_seconds:.1f}s)", 
+                        (30, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 200, 255), 2)
+            cv2.putText(frame, f"Tilt Faults:   {tilt_violations_count} ({total_tilt_seconds:.1f}s)", 
+                        (30, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 200, 255), 2)
 
-            # Active Alert Banners
-            y_banner = 220
+            # Live Posture Alerts
+            y_banner = 250
             if slouch_alert_active:
-                cv2.putText(frame, f"[ALERT] Sustained Slouching (+{angle_delta:.1f} deg)", 
-                            (30, y_banner), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 0, 255), 2)
+                cv2.putText(frame, f"[ALERT] Sustained Slouch (+{angle_delta:.1f} deg)", 
+                            (30, y_banner), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
                 y_banner += 35
             
             if tilt_alert_active:
                 cv2.putText(frame, "[ALERT] Sustained Shoulder Tilt", 
-                            (30, y_banner), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 0, 255), 2)
+                            (30, y_banner), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
                 y_banner += 35
 
             if not slouch_alert_active and not tilt_alert_active:
-                cv2.putText(frame, "STATUS: OPTIMAL", (30, 220), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 255, 0), 2)
+                cv2.putText(frame, "STATUS: OPTIMAL", (30, 250), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
         cv2.imshow("Kinematics - Live Inference Monitor", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -192,6 +200,37 @@ def main():
     cap.release()
     cv2.destroyAllWindows()
     landmarker.close()
+
+    # Session Summary Report Generation
+    total_session_duration = max(1.0, time.time() - session_start_time)
+    fault_time = min(total_session_duration, total_slouch_seconds + total_tilt_seconds)
+    optimal_time = max(0.0, total_session_duration - fault_time)
+    posture_score = round((optimal_time / total_session_duration) * 100, 1)
+
+    summary_data = {
+        "session_duration_seconds": round(total_session_duration, 2),
+        "optimal_posture_seconds": round(optimal_time, 2),
+        "slouch_fault_count": slouch_violations_count,
+        "slouch_duration_seconds": round(total_slouch_seconds, 2),
+        "tilt_fault_count": tilt_violations_count,
+        "tilt_duration_seconds": round(total_tilt_seconds, 2),
+        "posture_score_percentage": posture_score
+    }
+
+    with open("session_summary.json", "w") as f:
+        json.dump(summary_data, f, indent=4)
+
+    print("\n" + "="*50)
+    print("          PRESENTATION COACH PERFORMANCE REPORT")
+    print("="*50)
+    print(f"Total Session Duration : {summary_data['session_duration_seconds']}s")
+    print(f"Optimal Posture Time   : {summary_data['optimal_posture_seconds']}s")
+    print(f"Slouch Violations      : {summary_data['slouch_fault_count']} ({summary_data['slouch_duration_seconds']}s)")
+    print(f"Shoulder Tilt Faults   : {summary_data['tilt_fault_count']} ({summary_data['tilt_duration_seconds']}s)")
+    print("-" * 50)
+    print(f"Final Posture Score    : {summary_data['posture_score_percentage']} / 100")
+    print("="*50)
+    print("[INFO] Summary saved to 'session_summary.json'.\n")
 
 if __name__ == "__main__":
     main()
