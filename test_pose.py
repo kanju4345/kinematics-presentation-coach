@@ -39,16 +39,13 @@ def main():
             print("[ERROR] Failed to grab frame.")
             break
 
-        # Convert OpenCV BGR to RGB
+    
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
-        # Wrap into MediaPipe Image container
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
 
-        # Monotonically increasing timestamp in milliseconds required by RunningMode.VIDEO
         frame_timestamp_ms = int(time.time() * 1000) - start_time_ms
 
-        # Run inference
         detection_result = landmarker.detect_for_video(mp_image, frame_timestamp_ms)
 
         h, w, _ = frame.shape
@@ -61,7 +58,6 @@ def main():
                     # Draw green landmark circles on joints
                     cv2.circle(frame, (cx, cy), 4, (0, 255, 0), -1)
 
-        # FPS calculation
         current_time = time.time()
         fps = 1.0 / (current_time - prev_time) if (current_time - prev_time) > 0 else 0
         prev_time = current_time

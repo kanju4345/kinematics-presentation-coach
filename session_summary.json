@@ -1,0 +1,9 @@
+{
+    "session_duration_seconds": 24.38,
+    "optimal_posture_seconds": 24.38,
+    "slouch_fault_count": 0,
+    "slouch_duration_seconds": 0.0,
+    "tilt_fault_count": 0,
+    "tilt_duration_seconds": 0.0,
+    "posture_score_percentage": 100.0
+}
